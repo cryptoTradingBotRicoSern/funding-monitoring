@@ -1,4 +1,6 @@
 import datetime as dt
+import requests
+
 import numpy as np
 import pandas as pd
 
@@ -7,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.dialects.postgresql import insert
 
 
-from models import KuCoinFundingRates, KuCoinActiveFutures
+from models import KuCoinFundingRates
 
 # Set the postgres hook and session for the DB loading process
 pg_hook = PostgresHook(postgres_conn_id="postgres_localhost")
@@ -33,33 +35,45 @@ def query_funding_data() -> pd.DataFrame:
     return raw_df
 
 
+def get_futures_data() -> pd.DataFrame:
+    """Gets all active futures contracts"""
+    request = requests.get("https://api-futures.kucoin.com/api/v1/contracts/active")
+    request_data = request.json()
+    active_futures_df = pd.DataFrame.from_dict(request_data["data"])
+    active_futures_df = active_futures_df[
+        active_futures_df["symbol"].str.endswith("TM").reset_index(drop=True)
+    ]
+    keep = ["symbol", "predictedFundingFeeRate", "turnoverOf24h"]
+
+    clean_df = active_futures_df[keep]
+
+    clean_df.rename(
+        columns={
+            "predictedFundingFeeRate": "predicted_funding_rate",
+            "turnoverOf24h": "dollar_volume_24h",
+        },
+        inplace=True,
+    )
+
+    return clean_df
+
+
 def build_stats_table() -> pd.DataFrame:
     """Builds the funding stats table which consists of:
     - Averages of funding rates over time
     - 24h Volume"""
     full_funding_stats = pd.DataFrame()
     raw_df = query_funding_data()
-    universe = [
-        sym[0] for sym in session.query(KuCoinActiveFutures.symbol).distinct().all()
-    ]
+    futures_data = get_futures_data()
+    universe = futures_data["symbol"].unique()
 
     for symbol in universe:
         df = raw_df[raw_df["symbol"] == symbol].reset_index(drop=True)
 
         funding_stats = dict()
         funding_stats["symbol"] = symbol
-        funding_stats["volume"] = (
-            session.query(KuCoinActiveFutures.futures_dollar_volume_24h)
-            .filter(KuCoinActiveFutures.symbol == symbol)
-            .first()[0]
-        ).astype(float)
-        funding_stats["predicted_funding_rate"] = (
-            session.query(KuCoinActiveFutures.predicted_funding_fee_rate)
-            .filter(KuCoinActiveFutures.symbol == symbol)
-            .first()[0]
-        )
         funding_stats["funding_8h"] = (
-            df.loc[0, "funding_rate"] * 365
+            df.loc[0, "funding_rate"] * 3 * 365
         )  # The most recent funding rate data point
 
         periods = ["24h", "3d", "7d", "14d", "30d", "90d"]
@@ -73,6 +87,7 @@ def build_stats_table() -> pd.DataFrame:
                     .mean()
                     .dropna()
                     .reset_index(drop=True)[0]
+                    * 3
                     * 365
                 )
             else:
@@ -80,24 +95,34 @@ def build_stats_table() -> pd.DataFrame:
 
         full_funding_stats = full_funding_stats.append(funding_stats, ignore_index=True)
 
-    return full_funding_stats
+        final_df = pd.merge(full_funding_stats, futures_data, on="symbol")
+        final_df["predicted_funding_rate"] = (
+            final_df["predicted_funding_rate"] * 3 * 365
+        )
+        final_df = final_df[
+            [
+                "symbol",
+                "dollar_volume_24h",
+                "predicted_funding_rate",
+                "funding_8h",
+                "funding_24h",
+                "funding_3d",
+                "funding_7d",
+                "funding_14d",
+                "funding_30d",
+                "funding_90d",
+            ]
+        ]
+
+    return final_df
 
 
 def load_funding_stats_table():
     # Get the new data
     df = build_stats_table()
 
-    print(df)
-
-    # Drop the old data. I do this after already having new data to minimize
-    # the time the table is unavailable.
-    # session.execute("""TRUNCATE TABLE kucoin_funding_stats""")
-    # session.commit()
-    # session.close()
-
     # # Load new data
-    # df.to_csv("funding_stats_df.csv", index=False, header=False, sep="\t")
-    # pg_hook.bulk_load("kucoin_funding_stats", "funding_stats_df.csv")
+    df.to_sql("kucoin_funding_stats", con=engine, if_exists="replace", index=False)
 
 
 if __name__ == "__main__":
