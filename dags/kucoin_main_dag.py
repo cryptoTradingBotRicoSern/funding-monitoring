@@ -20,7 +20,7 @@ pg_hook = PostgresHook(postgres_conn_id="postgres_localhost")
 
 
 with DAG(
-    dag_id="kucoin_lending_dag_v2",
+    dag_id="kucoin_main_dag",
     default_args=default_args,
     description="A DAG to extract USDT lending and borrowing interest rates every 5 min",
     start_date=dt.datetime(2022, 1, 24),
