@@ -51,13 +51,14 @@ with DAG(
         bash_command="python3 /opt/airflow/scripts/funding_rates_etl.py",
     )
 
-    # update_funding_stats = BashOperator(
-    #     task_id="update_funding_stats",
-    #     bash_command="python3 /opt/airflow/scripts/funding_stats_etl.py",
-    # )
+    update_funding_stats = BashOperator(
+        task_id="update_funding_stats",
+        bash_command="python3 /opt/airflow/scripts/funding_stats_etl.py",
+    )
 
 (
     create_tables
     >> [update_active_futures, update_active_spot_pairs, append_new_lending_data]
     >> update_funding_data
+    >> update_funding_stats
 )
