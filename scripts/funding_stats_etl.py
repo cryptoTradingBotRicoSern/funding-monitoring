@@ -19,6 +19,7 @@ session = Session()
 
 
 def query_funding_data() -> pd.DataFrame:
+    """Returns a dataframe with the funding rates data for the past 120 days"""
     raw_results = (
         session.query(KuCoinFundingRates)
         .filter(
@@ -36,7 +37,8 @@ def query_funding_data() -> pd.DataFrame:
 
 
 def get_futures_data() -> pd.DataFrame:
-    """Gets all active futures contracts"""
+    """Returns a dataframe with the predicted funding rate and volumes for all
+    active futures in KuCoin"""
     request = requests.get("https://api-futures.kucoin.com/api/v1/contracts/active")
     request_data = request.json()
     active_futures_df = pd.DataFrame.from_dict(request_data["data"])
@@ -73,7 +75,8 @@ def build_stats_table() -> pd.DataFrame:
         funding_stats = dict()
         funding_stats["symbol"] = symbol
         funding_stats["funding_8h"] = (
-            df.loc[0, "funding_rate"] * 3 * 365
+            df.loc[0, "funding_rate"] * 3 * 365 
+            # Annualized (3 funding rounds a day, 365 days a year)
         )  # The most recent funding rate data point
 
         periods = ["24h", "3d", "7d", "14d", "30d", "90d"]
@@ -88,7 +91,7 @@ def build_stats_table() -> pd.DataFrame:
                     .dropna()
                     .reset_index(drop=True)[0]
                     * 3
-                    * 365
+                    * 365 # Annualized (3 funding rounds a day, 365 days a year)
                 )
             else:
                 funding_stats["funding_" + period] = np.NaN
